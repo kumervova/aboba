@@ -1,11 +1,13 @@
 const TARGET_HOST = 'https://priblivonis.icu'
 
-Deno.serve(
-	async (req: Request, connInfo: Deno.ServeHandlerInfo): Promise<Response> => {
+Deno.serve(async (req: Request, connInfo: Deno.ServeHandlerInfo): Promise<Response> => {
+	try {
 		const url = new URL(req.url)
 		const targetUrl = new URL(url.pathname + url.search, TARGET_HOST)
 
-		const { hostname: clientIp } = connInfo.remoteAddr as Deno.NetAddr
+		const clientIp =
+			req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
+			(connInfo.remoteAddr as Deno.NetAddr).hostname
 
 		const headers = new Headers(req.headers)
 
@@ -20,24 +22,25 @@ Deno.serve(
 
 		const proxyReq = new Request(targetUrl.toString(), {
 			method: req.method,
-			headers: req.headers,
+			headers,
 			body:
-				req.method !== 'GET' && req.method !== 'HEAD' ? req.body : undefined,
+				req.method !== 'GET' && req.method !== 'HEAD'
+					? req.body
+					: undefined,
+			redirect: 'manual',
 		})
 
-		try {
-			const response = await fetch(proxyReq)
+		const response = await fetch(proxyReq)
 
-			const headers = new Headers(response.headers)
-			headers.set('x-proxy', 'deno-deploy')
+		const respHeaders = new Headers(response.headers)
+		respHeaders.set('x-proxy', 'deno')
 
-			return new Response(response.body, {
-				status: response.status,
-				statusText: response.statusText,
-				headers,
-			})
-		} catch (err) {
-			return new Response('Proxy error: ' + err.message, { status: 502 })
-		}
+		return new Response(response.body, {
+			status: response.status,
+			statusText: response.statusText,
+			headers: respHeaders,
+		})
+	} catch (err) {
+		return new Response('Proxy error: ' + err.message, { status: 502 })
 	}
-)
+})
